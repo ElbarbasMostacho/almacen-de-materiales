@@ -118,7 +118,7 @@ h1, h2, h3 { line-height: 1.05; margin: 0; text-wrap: balance; }
 .ubicacion .direccion { font-size: clamp(1.4rem, 3vw, 2rem); font-weight: 800; margin: 0 0 6px; }
 .ubicacion .btn-linea { border-color: #fff; color: #fff; }
 
-.pie-sitio { padding: 28px 0 96px;font-size: .9rem; color: var(--gris); }
+.pie-sitio { padding: 28px 0 160px;font-size: .9rem; color: var(--gris); }
 .pie-sitio .contenedor { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; }
 
 /* Botón flotante de WhatsApp */
@@ -129,6 +129,9 @@ h1, h2, h3 { line-height: 1.05; margin: 0; text-wrap: balance; }
 }
 .flotante:hover { transform: scale(1.06); }
 .flotante svg { width: 32px; height: 32px; }
+/* "Cómo llegar": más chico y en negro, apilado sobre el de WhatsApp para no competirle */
+.flotante-mapa { bottom: 92px; right: 23px; width: 52px; height: 52px; background: var(--negro); color: #fff; }
+.flotante-mapa svg { width: 26px; height: 26px; }
 
 @media (max-width: 640px) {
   .nav a:not(.btn) { display: none; }
