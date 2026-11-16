@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Panel · Almacén de Materiales</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="admin">
+  <header class="cabecera">
+    <div class="contenedor">
+      <a class="marca" href="index.html"><span>Almacén de Materiales<small>Panel de publicaciones</small></span></a>
+      <nav class="nav"><button class="btn btn-linea" id="salir" hidden>Salir</button></nav>
+    </div>
+  </header>
+
+  <main class="contenedor">
+    <p class="aviso info" id="avisoConfig"></p>
+
+    <!-- Ingreso -->
+    <form class="caja ingreso" id="ingreso" hidden>
+      <h2>Ingresar</h2>
+      <p class="aviso error" id="errorIngreso"></p>
+      <div class="campo"><label for="email">Email</label><input id="email" type="email" autocomplete="username" required></div>
+      <div class="campo"><label for="clave">Contraseña</label><input id="clave" type="password" autocomplete="current-password" required></div>
+      <button class="btn btn-rojo" style="width:100%">Entrar</button>
+    </form>
+
+    <!-- Editor -->
+    <div id="panel" hidden>
+      <div class="editor">
+        <form class="caja" id="form" onsubmit="return false">
+          <h2>Nueva publicación</h2>
+          <div class="campo">
+            <label for="foto">Foto del material</label>
+            <input id="foto" type="file" accept="image/*">
+          </div>
+          <div class="campo">
+            <label for="plantilla">Plantilla</label>
+            <select id="plantilla">
+              <option value="producto">Producto (fondo blanco, con precio y detalles)</option>
+              <option value="foto">Foto completa (texto sobre la foto)</option>
+              <option value="lista">Imagen ya diseñada (no agrega texto; solo usa el título en la web)</option>
+            </select>
+          </div>
+          <div class="campo"><label for="titulo">Título</label><input id="titulo" maxlength="48" placeholder="Hormigonera volteo 400 L"></div>
+          <div class="fila">
+            <div class="campo"><label for="subtitulo">Subtítulo</label><input id="subtitulo" maxlength="40" placeholder="2 HP 220 V"></div>
+            <div class="campo"><label for="codigo">Etiqueta</label><input id="codigo" maxlength="14" placeholder="NUEVO"></div>
+          </div>
+          <div class="fila">
+            <div class="campo"><label for="precio">Precio</label><input id="precio" maxlength="18" placeholder="$ 2.766.033"><small>Dejalo vacío para “Consultá precio”.</small></div>
+            <div class="campo"><label for="nota">Nota del precio</label><input id="nota" maxlength="30" placeholder="+ IVA 10.5%"></div>
+          </div>
+          <div class="campo" id="campoDetalles">
+            <label for="detalles">Detalles (uno por renglón, hasta 4)</label>
+            <textarea id="detalles" placeholder="Motor eléctrico: 220V&#10;Capacidad: 3 m³ por hora"></textarea>
+          </div>
+          <div class="campo"><label for="zoom">Tamaño de la foto</label><input id="zoom" type="range" min="0.5" max="3" step="0.01" value="1"></div>
+        </form>
+
+        <div class="caja vista">
+          <canvas id="lienzo" width="1080" height="1350" aria-label="Vista previa de la publicación"></canvas>
+          <p class="ayuda">Arrastrá la foto para acomodarla.</p>
+          <p class="aviso" id="estado"></p>
+          <div class="acciones">
+            <button class="btn btn-linea" id="descargar" type="button">Descargar</button>
+            <button class="btn btn-rojo" id="publicar" type="button">Publicar en la web</button>
+          </div>
+        </div>
+      </div>
+
+      <section class="caja publicadas">
+        <h2>Publicadas</h2>
+        <div class="grilla" id="lista"></div>
+      </section>
+    </div>
+  </main>
+
+  <script src="config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+  <script>
+    const S = window.SITIO;
+    const $ = id => document.getElementById(id);
+    const W = 1080, H = 1350, ROJO = '#d7201f', NEGRO = '#161616';
+    const lienzo = $('lienzo'), ctx = lienzo.getContext('2d');
+    const estado = { img: null, dx: 0, dy: 0 };
+    let logo = null;
+
+    // ---------- Dibujo ----------
+    const fuente = (peso, px) => `${peso} ${px}px Archivo, sans-serif`;
+
+    function renglones(texto, peso, px, ancho) {
+      ctx.font = fuente(peso, px);
+      const out = []; let linea = '';
+      for (const palabra of texto.split(/\s+/).filter(Boolean)) {
+        const prueba = linea ? linea + ' ' + palabra : palabra;
+        if (ctx.measureText(prueba).width > ancho && linea) { out.push(linea); linea = palabra; }
+        else linea = prueba;
+      }
+      if (linea) out.push(linea);
+      return out;
+    }
+
+    // Achica la letra hasta que el título entre en `maxLineas` renglones.
+    function ajustar(texto, peso, pxMax, pxMin, ancho, maxLineas) {
+      for (let px = pxMax; px >= pxMin; px -= 4) {
+        const l = renglones(texto, peso, px, ancho);
+        if (l.length <= maxLineas && l.every(t => ctx.measureText(t).width <= ancho)) return { px, lineas: l };
+      }
+      return { px: pxMin, lineas: renglones(texto, peso, pxMin, ancho).slice(0, maxLineas) };
+    }
+
+    function pastilla(x, y, w, h, color) {
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.roundRect(x, y, w, h, h / 2); ctx.fill();
+    }
+
+    function dibujarFoto(x, y, w, h, cubrir) {
+      ctx.save();
+      ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+      const im = estado.img;
+      if (im) {
+        const base = cubrir ? Math.max(w / im.width, h / im.height) : Math.min(w / im.width, h / im.height);
+        const e = base * +$('zoom').value;
+        ctx.drawImage(im, x + w / 2 - im.width * e / 2 + estado.dx, y + h / 2 - im.height * e / 2 + estado.dy, im.width * e, im.height * e);
+      } else {
+        ctx.fillStyle = '#eceae6'; ctx.fillRect(x, y, w, h);
+        ctx.fillStyle = '#9a968f'; ctx.font = fuente(700, 40); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('Elegí una foto', x + w / 2, y + h / 2);
+      }
+      ctx.restore();
+    }
+
+    function franja() {
+      ctx.fillStyle = ROJO; ctx.fillRect(0, H - 84, W, 84);
+      ctx.fillStyle = '#fff'; ctx.textBaseline = 'middle'; ctx.font = fuente(800, 30);
+      ctx.textAlign = 'left';
+      let x = 60;
+      if (logo) { const lh = 56, lw = logo.width * lh / logo.height; ctx.drawImage(logo, x, H - 70, lw, lh); x += lw + 16; }
+      ctx.fillText(S.NOMBRE.toUpperCase(), x, H - 40);
+      ctx.textAlign = 'right';
+      ctx.fillText('WhatsApp ' + S.WHATSAPP_VISIBLE, W - 60, H - 40);
+    }
+
+    function dibujar() {
+      const v = id => $(id).value.trim();
+      const titulo = (v('titulo') || 'Título del material').toUpperCase();
+      const precio = v('precio') || 'Consultá precio';
+      const detalles = $('detalles').value.split('\n').map(s => s.trim()).filter(Boolean).slice(0, 4);
+      const M = 64, ancho = W - M * 2;
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+
+      if ($('plantilla').value === 'lista') {
+        ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+        return dibujarFoto(0, 0, W, H, true);
+      }
+      if ($('plantilla').value === 'producto') {
+        ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+        const t = ajustar(titulo, 900, 92, 52, ancho, 2);
+        let y = 60;
+        ctx.fillStyle = NEGRO; ctx.font = fuente(900, t.px);
+        for (const l of t.lineas) { ctx.fillText(l, M, y); y += t.px * 1.02; }
+        y += 10;
+        if (v('subtitulo') || v('codigo')) {
+          ctx.font = fuente(600, 42); ctx.fillStyle = '#3a3a3a';
+          ctx.fillText(v('subtitulo'), M, y + 6);
+          if (v('codigo')) {
+            ctx.font = fuente(800, 30);
+            const cw = ctx.measureText(v('codigo').toUpperCase()).width + 44;
+            pastilla(W - M - cw, y, cw, 54, '#3f9b2f');
+            ctx.fillStyle = '#fff'; ctx.textBaseline = 'middle';
+            ctx.fillText(v('codigo').toUpperCase(), W - M - cw + 22, y + 28);
+            ctx.textBaseline = 'top';
+          }
+          y += 74;
+        }
+        // De abajo hacia arriba: franja, detalles, precio. La foto ocupa lo que queda.
+        let fin = H - 84 - 30;
+        if (detalles.length) {
+          fin -= detalles.length * 46;
+          ctx.font = fuente(600, 32); ctx.fillStyle = '#2b2b2b';
+          detalles.forEach((d, i) => {
+            ctx.fillStyle = ROJO; ctx.fillRect(M, fin + i * 46 + 12, 12, 12);
+            ctx.fillStyle = '#2b2b2b'; ctx.fillText(d, M + 28, fin + i * 46, ancho - 28);
+          });
+          fin -= 24;
+        }
+        if (v('nota')) { fin -= 40; ctx.font = fuente(700, 30); ctx.fillStyle = '#3a3a3a'; ctx.textAlign = 'center'; ctx.fillText(v('nota'), W / 2, fin); fin -= 10; }
+        ctx.font = fuente(900, 64);
+        const pw = Math.min(ancho, ctx.measureText(precio).width + 90);
+        fin -= 104;
+        pastilla(W / 2 - pw / 2, fin, pw, 104, NEGRO);
+        ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(precio, W / 2, fin + 54, pw - 50);
+        dibujarFoto(M, y + 10, ancho, fin - y - 34, false);
+      } else {
+        dibujarFoto(0, 0, W, H, true);
+        const g = ctx.createLinearGradient(0, H * 0.35, 0, H);
+        g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.75, 'rgba(0,0,0,.82)');
+        ctx.fillStyle = g; ctx.fillRect(0, H * 0.35, W, H * 0.65);
+        const t = ajustar(titulo, 900, 96, 56, ancho, 3);
+        let y = H - 84 - 50;
+        ctx.font = fuente(900, 56);
+        const pw = Math.min(ancho, ctx.measureText(precio).width + 70);
+        y -= 92; pastilla(M, y, pw, 92, ROJO);
+        ctx.fillStyle = '#fff'; ctx.textBaseline = 'middle'; ctx.fillText(precio, M + 35, y + 48, pw - 50);
+        if (v('nota')) { ctx.font = fuente(700, 30); ctx.fillText(v('nota'), M + pw + 20, y + 48); }
+        ctx.textBaseline = 'top';
+        if (v('subtitulo')) { y -= 72; ctx.font = fuente(600, 44); ctx.fillText(v('subtitulo'), M, y, ancho); }
+        y -= 14;
+        ctx.font = fuente(900, t.px);
+        for (const l of [...t.lineas].reverse()) { y -= t.px * 1.02; ctx.fillText(l, M, y); }
+        if (v('codigo')) {
+          ctx.font = fuente(800, 30);
+          const cw = ctx.measureText(v('codigo').toUpperCase()).width + 44;
+          pastilla(M, 60, cw, 54, '#3f9b2f');
+          ctx.fillStyle = '#fff'; ctx.textBaseline = 'middle'; ctx.fillText(v('codigo').toUpperCase(), M + 22, 88);
+        }
+      }
+      franja();
+    }
+
+    // ---------- Controles del editor ----------
+    $('form').addEventListener('input', e => {
+      if (e.target.id === 'plantilla') { estado.dx = estado.dy = 0; $('campoDetalles').hidden = e.target.value !== 'producto'; }
+      dibujar();
+    });
+    $('foto').addEventListener('change', e => {
+      const archivo = e.target.files[0];
+      if (!archivo) return;
+      const im = new Image();
+      im.onload = () => { estado.img = im; estado.dx = estado.dy = 0; $('zoom').value = 1; dibujar(); };
+      im.onerror = () => aviso('error', 'No se pudo abrir esa foto. Probá con un JPG o PNG.');
+      im.src = URL.createObjectURL(archivo);
+    });
+    let arrastre = null;
+    lienzo.addEventListener('pointerdown', e => { arrastre = { x: e.clientX, y: e.clientY }; lienzo.setPointerCapture(e.pointerId); });
+    lienzo.addEventListener('pointermove', e => {
+      if (!arrastre) return;
+      const k = W / lienzo.clientWidth;
+      estado.dx += (e.clientX - arrastre.x) * k; estado.dy += (e.clientY - arrastre.y) * k;
+      arrastre = { x: e.clientX, y: e.clientY };
+      dibujar();
+    });
+    lienzo.addEventListener('pointerup', () => arrastre = null);
+    lienzo.addEventListener('pointercancel', () => arrastre = null);
+
+    function aviso(tipo, texto) { const a = $('estado'); a.className = 'aviso ' + tipo; a.textContent = texto; }
+    const aBlob = () => new Promise(ok => lienzo.toBlob(ok, 'image/jpeg', 0.88));
+    function validar() {
+      if (!estado.img) return aviso('error', 'Primero elegí una foto.'), false;
+      if (!$('titulo').value.trim()) return aviso('error', 'Falta el título.'), false;
+      return true;
+    }
+
+    $('descargar').addEventListener('click', async () => {
+      if (!validar()) return;
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(await aBlob());
+      a.download = $('titulo').value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') + '.jpg';
+      a.click();
+      aviso('ok', 'Imagen descargada. Es la misma que podés subir a Instagram.');
+    });
+
+    // ---------- Supabase ----------
+    const sb = S.SUPABASE_ANON_KEY ? supabase.createClient(S.SUPABASE_URL, S.SUPABASE_ANON_KEY) : null;
+
+    $('publicar').addEventListener('click', async () => {
+      if (!validar()) return;
+      const btn = $('publicar'); btn.disabled = true; aviso('info', 'Publicando…');
+      const ruta = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`;
+      const subida = await sb.storage.from(S.BUCKET).upload(ruta, await aBlob(), { contentType: 'image/jpeg' });
+      let error = subida.error;
+      if (!error) {
+        ({ error } = await sb.from('publicaciones').insert({ titulo: $('titulo').value.trim(), precio: $('precio').value.trim() || null, imagen_path: ruta }));
+        if (error) await sb.storage.from(S.BUCKET).remove([ruta]);
+      }
+      btn.disabled = false;
+      if (error) return aviso('error', 'No se pudo publicar: ' + error.message);
+      aviso('ok', 'Publicado. Ya se ve en la página.');
+      listar();
+    });
+
+    async function listar() {
+      const { data, error } = await sb.from('publicaciones').select('id,titulo,imagen_path,created_at').order('created_at', { ascending: false });
+      const lista = $('lista');
+      if (error) { lista.textContent = 'No se pudo cargar la lista: ' + error.message; return; }
+      if (!data.length) { lista.textContent = 'Todavía no hay publicaciones.'; return; }
+      lista.replaceChildren(...data.map(p => {
+        const art = document.createElement('article'); art.className = 'tarjeta';
+        const img = document.createElement('img'); img.loading = 'lazy'; img.alt = '';
+        img.src = sb.storage.from(S.BUCKET).getPublicUrl(p.imagen_path).data.publicUrl;
+        const pie = document.createElement('div'); pie.className = 'pie';
+        const h = document.createElement('h3'); h.textContent = p.titulo;
+        const f = document.createElement('p'); f.className = 'fecha'; f.textContent = new Date(p.created_at).toLocaleDateString('es-AR');
+        const b = document.createElement('button'); b.className = 'btn btn-linea'; b.textContent = 'Quitar';
+        b.onclick = async () => {
+          if (!confirm(`¿Quitar "${p.titulo}" de la página? No se puede deshacer.`)) return;
+          const { error } = await sb.from('publicaciones').delete().eq('id', p.id);
+          if (error) return alert('No se pudo quitar: ' + error.message);
+          await sb.storage.from(S.BUCKET).remove([p.imagen_path]);
+          listar();
+        };
+        pie.append(h, f, b); art.append(img, pie);
+        return art;
+      }));
+    }
+
+    function mostrar(sesion) {
+      $('ingreso').hidden = !!sesion; $('panel').hidden = !sesion; $('salir').hidden = !sesion;
+      if (sesion) { dibujar(); listar(); }
+    }
+
+    async function iniciar() {
+      await Promise.all([document.fonts.load(fuente(900, 40)), document.fonts.load(fuente(600, 40)), document.fonts.load(fuente(800, 40)), document.fonts.load(fuente(700, 40))]).catch(() => {});
+      await new Promise(ok => { const l = new Image(); l.onload = () => { logo = l; ok(); }; l.onerror = ok; l.src = 'logo.png'; });
+      if (!sb) {
+        // Sin clave configurada: el editor funciona y se puede descargar, pero no publicar.
+        $('avisoConfig').textContent = 'Falta la clave de Supabase en config.js. Podés armar y descargar imágenes, pero todavía no publicar.';
+        $('panel').hidden = false; $('publicar').disabled = true; $('lista').textContent = 'Sin conexión a Supabase.';
+        return dibujar();
+      }
+      $('ingreso').addEventListener('submit', async e => {
+        e.preventDefault();
+        const { error } = await sb.auth.signInWithPassword({ email: $('email').value, password: $('clave').value });
+        $('errorIngreso').textContent = error ? 'Email o contraseña incorrectos.' : '';
+      });
+      $('salir').addEventListener('click', () => sb.auth.signOut());
+      sb.auth.onAuthStateChange((_e, sesion) => mostrar(sesion));
+    }
+    iniciar();
+  </script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "sitio", "runtimeExecutable": "node", "runtimeArgs": [".claude/servir.js"], "port": 5178 }
+  ]
+}
