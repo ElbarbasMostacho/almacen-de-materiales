@@ -156,8 +156,10 @@
       ctx.textAlign = 'left'; ctx.textBaseline = 'top';
 
       if ($('plantilla').value === 'lista') {
-        ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
-        return dibujarFoto(0, 0, W, H, true);
+        // Entera, sin recortar: si la imagen no es 4:5 quedan bandas negras a los costados o arriba y abajo.
+        ctx.fillStyle = NEGRO; ctx.fillRect(0, 0, W, H);
+        if (!estado.img) return dibujarFoto(0, 0, W, H, true);
+        return dibujarFoto(0, 0, W, H, false);
       }
       if ($('plantilla').value === 'producto') {
         ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
